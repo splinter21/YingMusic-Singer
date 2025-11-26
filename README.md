@@ -79,7 +79,7 @@ bash my_infer.sh
 
 - [x] Release beta version inference code and model checkpoints (currently supports Chinese & lower audio quality).
 - [ ] Release V1 Version: Support for Chinese & English singing with higher audio quality and better generalization.
-- [ ] Release training code.
+<!-- - [ ] Release training code. -->
 
 ---
 
