@@ -41,7 +41,7 @@ Our approach leverages a **Diffusion Transformer (DiT)** based generative model,
 ## News & Updates 🗞️
 
 - **2025-11-26**: Released the beta version's inference code and model checkpoints.
-- **2025-11-26**: Released the technical report.
+- **2025-11-27**: Released the technical report.
 
 ---
 
