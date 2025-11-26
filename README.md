@@ -27,8 +27,8 @@ Our approach leverages a **Diffusion Transformer (DiT)** based generative model,
 - **Annotation-free Melody Guidance**: Derives melody directly from reference audio, removing the need for manual MIDI or phoneme-level annotations.
 - **Zero-Shot Capabilities**: Synthesize or edit high-quality singing voices from arbitrary lyrics and reference melodies without training on the target voice.
 - **Flow-GRPO Reinforcement Learning**: Optimizes pronunciation, melodic accuracy, and musicality via multi-objective rewards.
-- **Structured Guidance Mechanism**: Enhances melodic stability and coherence using similarity distribution constraints.
-- **Robust Generalization**: Outperforms existing methods in zero-shot synthesis and lyric replacement scenarios.
+<!-- - **Structured Guidance Mechanism**: Enhances melodic stability and coherence using similarity distribution constraints. -->
+<!-- - **Robust Generalization**: Outperforms existing methods in zero-shot synthesis and lyric replacement scenarios. -->
 
 ---
 
