@@ -358,6 +358,7 @@ if __name__ == "__main__":
 
     singer = YingSinger()
     singer._load_checkpoint(args.ckpt_path)
+    singer.to("cuda")
 
     gen_wav = singer.inference(
         timbre_audio_path=args.timbre_audio_path,
