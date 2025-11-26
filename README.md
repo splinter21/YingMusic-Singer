@@ -63,14 +63,27 @@ pip install -r requirements.txt
 ### 1. Singing Voice Synthesis
 
 ```bash
-cd accom_separation
-bash infer.sh
+python src/singer/model.py --ckpt_path "ckpt_path" \
+    --timbre_audio_path "resources/audios/0000.wav" \
+    --timbre_audio_content "在爱的回归线 又期待相见" \
+    --melody_audio_path "resources/audios/mxsf.wav" \
+    --lyrics "你说 你爱了不该爱的人 你的心中满是伤痕" \
+    --out_path "test_yingsinger_zs.wav" \
+    --cfg_strength 2.0 \
+    --nfe_steps 100
 ```
 
 ### 2. Singing Voice Editing
 
 ```bash
-bash my_infer.sh
+python src/singer/model.py --ckpt_path "ckpt_path" \
+    --timbre_audio_path "resources/audios/mxsf.wav" \
+    --timbre_audio_content "你说 你爱了不该爱的人 你的心中满是伤痕" \
+    --melody_audio_path "resources/audios/mxsf.wav" \
+    --lyrics "你说 你演错了剧本 赔尽了天真心真" \
+    --out_path "outputs/test_yingsinger.wav" \
+    --cfg_strength 2.0 \
+    --nfe_steps 100
 ```
 
 ---
