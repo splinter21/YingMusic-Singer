@@ -75,7 +75,7 @@ bash my_infer.sh
 
 ---
 
-## Development Roadmap & TODO 🗺️
+## Roadmap & TODO 🗺️
 
 - [x] Release beta version inference code and model checkpoints (currently supports Chinese & lower audio quality).
 - [ ] Release V1 Version: Support for Chinese & English singing with higher audio quality and better generalization.
