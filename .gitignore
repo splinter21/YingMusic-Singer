@@ -4,3 +4,4 @@ resources/infer_out
 outputs
 *pt
 ./*wav
+.cache
