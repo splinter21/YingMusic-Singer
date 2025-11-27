@@ -12,13 +12,10 @@ from __future__ import annotations
 import math
 from typing import Optional
 
-import ot
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torchaudio
-from librosa.filters import mel as librosa_mel_fn
-from torch import nn
 from x_transformers.x_transformers import apply_rotary_pos_emb
 
 from singer.decoder.utils import is_package_available
@@ -28,51 +25,6 @@ from singer.decoder.utils import is_package_available
 
 mel_basis_cache = {}
 hann_window_cache = {}
-
-
-def get_bigvgan_mel_spectrogram(
-    waveform,
-    n_fft=1024,
-    n_mel_channels=100,
-    target_sample_rate=24000,
-    hop_length=256,
-    win_length=1024,
-    fmin=0,
-    fmax=None,
-    center=False,
-):  # Copy from https://github.com/NVIDIA/BigVGAN/tree/main
-    device = waveform.device
-    key = f"{n_fft}_{n_mel_channels}_{target_sample_rate}_{hop_length}_{win_length}_{fmin}_{fmax}_{device}"
-
-    if key not in mel_basis_cache:
-        mel = librosa_mel_fn(sr=target_sample_rate, n_fft=n_fft, n_mels=n_mel_channels, fmin=fmin, fmax=fmax)
-        mel_basis_cache[key] = torch.from_numpy(mel).float().to(device)  # TODO: why they need .float()?
-        hann_window_cache[key] = torch.hann_window(win_length).to(device)
-
-    mel_basis = mel_basis_cache[key]
-    hann_window = hann_window_cache[key]
-
-    padding = (n_fft - hop_length) // 2
-    waveform = torch.nn.functional.pad(waveform.unsqueeze(1), (padding, padding), mode="reflect").squeeze(1)
-
-    spec = torch.stft(
-        waveform,
-        n_fft,
-        hop_length=hop_length,
-        win_length=win_length,
-        window=hann_window,
-        center=center,
-        pad_mode="reflect",
-        normalized=False,
-        onesided=True,
-        return_complex=True,
-    )
-    spec = torch.sqrt(torch.view_as_real(spec).pow(2).sum(-1) + 1e-9)
-
-    mel_spec = torch.matmul(mel_basis, spec)
-    mel_spec = torch.log(torch.clamp(mel_spec, min=1e-5))
-
-    return mel_spec
 
 
 def get_vocos_mel_spectrogram(
@@ -125,10 +77,7 @@ class MelSpec(nn.Module):
         self.n_mel_channels = n_mel_channels
         self.target_sample_rate = target_sample_rate
 
-        if mel_spec_type == "vocos":
-            self.extractor = get_vocos_mel_spectrogram
-        elif mel_spec_type == "bigvgan":
-            self.extractor = get_bigvgan_mel_spectrogram
+        self.extractor = get_vocos_mel_spectrogram
 
         self.register_buffer("dummy", torch.tensor(0), persistent=False)
 
@@ -784,47 +733,3 @@ class TimestepEmbedding(nn.Module):
         time_hidden = time_hidden.to(timestep.dtype)
         time = self.time_mlp(time_hidden)  # b d
         return time
-
-
-class GromovWassersteinLoss(nn.Module):
-    def __init__(self, loss_fun: str = "square_loss", epsilon: float = 1, reduction: str = "mean"):
-        super(GromovWassersteinLoss, self).__init__()
-        self.loss_fun = loss_fun
-        self.epsilon = epsilon
-        self.reduction = reduction
-        if reduction not in ["mean", "sum", "none"]:
-            raise ValueError(f"reduction '{reduction}' is not supported. Use 'mean', 'sum', or 'none'.")
-
-    def forward(self, sim_A: torch.Tensor, sim_B: torch.Tensor) -> torch.Tensor:
-        assert sim_A.dim() == 3 and sim_A.shape[1] == sim_A.shape[2], "sim_A must be a tensor of shape [B, N, N]"
-        assert sim_B.dim() == 3 and sim_B.shape[1] == sim_B.shape[2], "sim_B must be a tensor of shape [B, M, M]"
-        assert sim_A.shape[0] == sim_B.shape[0], "Batch size of sim_A and sim_B must be the same"
-
-        batch_size = sim_A.shape[0]
-        m, n = sim_A.shape[1], sim_B.shape[1]
-        device = sim_A.device
-
-        p = torch.ones(m, device=device) / m
-        q = torch.ones(n, device=device) / n
-
-        batch_losses = []
-        for i in range(batch_size):
-            sim_A_i = sim_A[i]
-            sim_B_i = sim_B[i]
-
-            dist_A_i = 1.0 - sim_A_i
-            dist_B_i = 1.0 - sim_B_i
-
-            loss_i = ot.gromov.entropic_gromov_wasserstein2(
-                C1=dist_A_i, C2=dist_B_i, p=p, q=q, loss_fun=self.loss_fun, epsilon=self.epsilon, max_iter=500
-            )
-            batch_losses.append(loss_i)
-
-        losses_tensor = torch.stack(batch_losses)
-
-        if self.reduction == "mean":
-            return losses_tensor.mean()
-        elif self.reduction == "sum":
-            return losses_tensor.sum()
-        else:  # self.reduction == 'none'
-            return losses_tensor

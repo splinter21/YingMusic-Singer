@@ -175,7 +175,6 @@ class MIDIExtractor(nn.Module):
         bound_probs = torch.squeeze(bound_probs, -1)
 
         masks = torch.ones_like(bound_probs).bool()
-        # Avoid in-place ops on tensors needed for autograd (outputs of SigmoidBackward)
         probs = probs * masks[..., None]
         bound_probs = bound_probs * masks
         unit2note_pred = decode_bounds_to_alignment(bound_probs) * masks

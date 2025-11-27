@@ -3,7 +3,7 @@ from __future__ import annotations
 import importlib
 from os import PathLike
 from pathlib import Path
-from typing import Callable
+from typing import Callable, List, Optional, Union
 
 import torch
 import torch.nn.functional as F
@@ -30,87 +30,86 @@ from singer.decoder.utils import (
 class YingSinger(nn.Module):
     def __init__(
         self,
-        sigma=0.0,
-        num_channels=None,
-        mel_spec_module: nn.Module | None = None,
-        mel_spec_kwargs: dict = dict(),
-        frac_lengths_mask: tuple[float, float] = (0.7, 1.0),
+        singer_path: Union[str, PathLike, None] = None,
+        vocoder_path: Union[str, PathLike, None] = None,
+        device: Union[str, torch.device] = "cpu",
+        cache_dir: Union[str, PathLike, None] = None,
     ):
         super().__init__()
+        self.cache_dir = cache_dir
+        self.device_type = device
 
-        self.frac_lengths_mask = frac_lengths_mask
+        self._load_vocab()
+        self._init_model()
 
-        with open(f"{Path(__file__).parent}/config/vocab.txt", "r", encoding="utf-8") as f:
-            vocab_char_map = {}
-            for i, char in enumerate(f):
-                vocab_char_map[char[:-1]] = i
-        self.vocab_char_map = vocab_char_map
-        self.vocab_size = len(vocab_char_map)
-
-        _cfg = OmegaConf.load(f"{Path(__file__).parent}/config/beta.yaml")
-
-        decoder_cls_path = _cfg.decoder.backbone
-        module_path, class_name = decoder_cls_path.rsplit(".", 1)
-        module = importlib.import_module(module_path)
-        decoder_cls = getattr(module, class_name)
-
-        decoder_arc = _cfg.decoder.arch
-
-        melody_encoder_cls_path = _cfg.melody_encoder.backbone
-        module_path, class_name = melody_encoder_cls_path.rsplit(".", 1)
-        module = importlib.import_module(module_path)
-        melody_encoder_cls = getattr(module, class_name)
-
-        mel_dim = _cfg.decoder.mel_spec.n_mel_channels
-        mel_spec_kwargs = dict(_cfg.decoder.mel_spec)
-
-        self.transformer = decoder_cls(**decoder_arc, text_num_embeds=self.vocab_size, mel_dim=mel_dim)
-        self.melody_extractor = melody_encoder_cls(in_dim=mel_dim)
-        self.vocoder = self._load_vocoder(
-            vocoder_path=_cfg.decoder.vocoder.path,
-            is_local=_cfg.decoder.vocoder.is_local,
-            hf_cache_dir="./.cache/huggingface",
-        )
-
-        self.sigma = sigma
-
-        self.mel_spec = default(mel_spec_module, MelSpec(**mel_spec_kwargs))
-        num_channels = default(num_channels, self.mel_spec.n_mel_channels)
-        self.num_channels = num_channels
+        self.load_singer(ckpt_path=singer_path, device=device)
+        self.vocoder = self.load_vocoder(vocoder_path=vocoder_path, device=device)
 
         self.resampler_cache = dict()
 
-    def _load_checkpoint(
-        self,
-        ckpt_path: str | PathLike,
-        map_location: str | torch.device = "cpu",
-    ):
-        ckpt_path = str(ckpt_path)
-        stats = torch.load(ckpt_path, map_location=map_location)
-        if "model" in stats:
-            self.load_state_dict(stats["model"], strict=False)
-        else:
-            self.load_state_dict(stats, strict=False)
+    def _load_vocab(self):
+        vocab_path = Path(__file__).parent / "config" / "vocab.txt"
+        with open(vocab_path, "r", encoding="utf-8") as f:
+            self.vocab_char_map = {char.strip(): i for i, char in enumerate(f)}
+        self.vocab_size = len(self.vocab_char_map)
 
-    def _load_vocoder(
-        self,
-        vocoder_path: str | PathLike,
-        is_local: bool = False,
-        hf_cache_dir: str | PathLike = "./.cache/huggingface",
-    ):
-        if is_local:
-            assert vocoder_path != "", "local_path must be provided when is_local is True"
-            print(f"Load vocos from local path {vocoder_path}")
-            config_path = f"{vocoder_path}/config.yaml"
-            model_path = f"{vocoder_path}/pytorch_model.bin"
+    def _init_model(self):
+        config_path = Path(__file__).parent / "config" / "beta.yaml"
+        _cfg = OmegaConf.load(config_path)
+
+        def get_cls(cls_path):
+            module_path, class_name = cls_path.rsplit(".", 1)
+            module = importlib.import_module(module_path)
+            return getattr(module, class_name)
+
+        decoder_cls = get_cls(_cfg.decoder.backbone)
+        melody_encoder_cls = get_cls(_cfg.melody_encoder.backbone)
+
+        mel_spec_kwargs = dict(_cfg.decoder.mel_spec)
+        self.mel_spec = MelSpec(**mel_spec_kwargs)
+        self.num_channels = self.mel_spec.n_mel_channels
+
+        self.singer = nn.Module()
+        self.singer.transformer = decoder_cls(
+            **_cfg.decoder.arch, text_num_embeds=self.vocab_size, mel_dim=self.num_channels
+        )
+        self.singer.melody_extractor = melody_encoder_cls(in_dim=self.num_channels)
+
+    def load_singer(self, ckpt_path: Union[str, PathLike, None] = None, device: Union[str, torch.device] = "cpu"):
+        if ckpt_path is None:
+            ckpt_path = hf_hub_download(
+                repo_id="GiantAILab/YingMusic-Singer",
+                filename="yingsinger.dev.pt",
+                cache_dir=self.cache_dir,
+            )
+
+        stats = torch.load(ckpt_path, map_location="cpu", weights_only=True)
+        if "model" in stats:
+            self.singer.load_state_dict(stats["model"], strict=True)
         else:
+            self.singer.load_state_dict(stats, strict=True)
+
+        self.singer = self.singer.to(device)
+
+    def load_vocoder(
+        self,
+        vocoder_path: Union[str, PathLike, None] = None,
+        device: Union[str, torch.device] = "cpu",
+    ):
+        if vocoder_path is None:
             print("Download Vocos from huggingface charactr/vocos-mel-24khz")
             repo_id = "charactr/vocos-mel-24khz"
-            config_path = hf_hub_download(repo_id=repo_id, cache_dir=hf_cache_dir, filename="config.yaml")
-            model_path = hf_hub_download(repo_id=repo_id, cache_dir=hf_cache_dir, filename="pytorch_model.bin")
+            config_path = hf_hub_download(repo_id=repo_id, cache_dir=self.cache_dir, filename="config.yaml")
+            model_path = hf_hub_download(repo_id=repo_id, cache_dir=self.cache_dir, filename="pytorch_model.bin")
+        else:
+            vocoder_path = Path(vocoder_path)
+            assert vocoder_path.exists(), f"Vocoder path {vocoder_path} does not exist."
+            config_path = vocoder_path / "config.yaml"
+            model_path = vocoder_path / "pytorch_model.bin"
 
         vocoder = Vocos.from_hparams(config_path)
         state_dict = torch.load(model_path, map_location="cpu", weights_only=True)
+
         from vocos.feature_extractors import EncodecFeatures
 
         if isinstance(vocoder.feature_extractor, EncodecFeatures):
@@ -119,8 +118,10 @@ class YingSinger(nn.Module):
                 for key, value in vocoder.feature_extractor.encodec.state_dict().items()
             }
             state_dict.update(encodec_parameters)
+
         vocoder.load_state_dict(state_dict)
         vocoder = vocoder.eval()
+        vocoder = vocoder.to(device)
 
         return vocoder
 
@@ -128,22 +129,22 @@ class YingSinger(nn.Module):
     def device(self):
         return next(self.parameters()).device
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def sample(
         self,
-        cond: float["b n d"] | float["b nw"],  # noqa: F722
-        text: int["b nt"] | list[str],  # noqa: F722
-        duration: int | int["b"] | None = None,  # noqa: F821
+        cond: Union[torch.Tensor, float],
+        text: Union[torch.Tensor, List[str]],
+        duration: Optional[Union[int, torch.Tensor]] = None,
         *,
-        melody_in: float["b n d"] | None = None,
-        lens: int["b"] | None = None,  # noqa: F821
-        steps=32,
-        cfg_strength=1.0,
-        sway_sampling_coef=None,
-        seed: int | None = None,
-        max_duration=4096,
-        vocoder: Callable[[float["b d n"]], float["b nw"]] | None = None,  # noqa: F722
-        use_epss=True,
+        melody_in: Optional[torch.Tensor] = None,
+        lens: Optional[torch.Tensor] = None,
+        steps: int = 32,
+        cfg_strength: float = 1.0,
+        sway_sampling_coef: Optional[float] = None,
+        seed: Optional[int] = None,
+        max_duration: int = 4096,
+        vocoder: Optional[Callable] = None,
+        use_epss: bool = True,
     ):
         self.eval()
 
@@ -230,7 +231,7 @@ class YingSinger(nn.Module):
 
         return out, trajectory
 
-    def _load_audio(self, path, target_sr):
+    def _load_audio(self, path: Union[str, PathLike], target_sr: int):
         audio_ori, sr = torchaudio.load(path)
         if audio_ori.shape[0] > 1:
             audio_ori = torch.mean(audio_ori, dim=0, keepdim=True)
@@ -264,13 +265,13 @@ class YingSinger(nn.Module):
 
     def inference(
         self,
-        timbre_audio_path: str,
+        timbre_audio_path: Union[str, PathLike],
         timbre_audio_content: str,
-        melody_audio_path: str | None = None,
-        lyrics: str | None = None,
+        melody_audio_path: Optional[Union[str, PathLike]] = None,
+        lyrics: Optional[str] = None,
         cfg_strength: float = 2.0,
         nfe_steps: int = 32,
-        seed: int | None = 2025,
+        seed: Optional[int] = 2025,
     ):
         _device = self.device
 
@@ -343,7 +344,7 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
 
-    parser.add_argument("--ckpt_path", type=str, default="", help="Path to model checkpoint.")
+    parser.add_argument("--ckpt_path", type=str, default=None, help="Path to model checkpoint.")
     parser.add_argument("--timbre_audio_path", type=str, default="", help="Path to timbre audio.")
     parser.add_argument("--timbre_audio_content", type=str, default="", help="Content of timbre audio.")
     parser.add_argument("--melody_audio_path", type=str, default="", help="Path to melody audio.")
@@ -356,9 +357,7 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    singer = YingSinger()
-    singer._load_checkpoint(args.ckpt_path)
-    singer.to("cuda")
+    singer = YingSinger(device="cuda" if torch.cuda.is_available() else "cpu", singer_path=args.ckpt_path)
 
     gen_wav = singer.inference(
         timbre_audio_path=args.timbre_audio_path,
