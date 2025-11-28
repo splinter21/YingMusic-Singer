@@ -352,7 +352,7 @@ if __name__ == "__main__":
     parser.add_argument("--out_path", type=str, default="", help="Path to save output audio.")
 
     parser.add_argument("--lyrics", type=str, default="", help="Lyrics text.")
-    parser.add_argument("--cfg_strength", type=float, default=2.0, help="Classifier-free guidance strength.")
+    parser.add_argument("--cfg_strength", type=float, default=3.0, help="Classifier-free guidance strength.")
     parser.add_argument("--nfe_steps", type=int, default=32, help="Number of function evaluations (NFE) steps.")
     parser.add_argument("--seed", type=int, default=2025, help="Random seed.")
 
