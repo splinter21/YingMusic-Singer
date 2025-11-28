@@ -288,6 +288,8 @@ class YingSinger(nn.Module):
         timbre_audio = timbre_audio.to(_device)
         timbre_audio_len = timbre_audio.shape[1] // self.mel_spec.hop_length
 
+        lyrics = " ".join(lyrics.strip().splitlines())
+
         assert isinstance(timbre_audio_content, str) and len(timbre_audio_content) > 0, (
             "Timbre audio content must be provided as a non-empty string."
         )
