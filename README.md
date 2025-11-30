@@ -72,7 +72,7 @@ export PYTHONPATH=$(pwd)/src:$PYTHONPATH
 
 ## Quick Start 🚀
 
-Download model checkpoints from [huggingface](https://huggingface.co/GiantAILab/YingMusic-Singer)
+Download model checkpoints from [huggingface](https://huggingface.co/GiantAILab/YingMusic-Singer) or [modelscope](https://www.modelscope.cn/models/giantailab/YingMusic-Singer/)
 
 ### 1. Singing Voice Synthesis
 
